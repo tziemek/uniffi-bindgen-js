@@ -84,6 +84,7 @@ fn component_interface_to_metadata(
                     name: a.name().to_string(),
                     type_: a.as_type(),
                     default: a.default_value().cloned(),
+                    by_ref: a.by_ref(),
                 })
                 .collect(),
             return_type: f.return_type().cloned(),
@@ -136,6 +137,7 @@ fn component_interface_to_metadata(
                             name: a.name().to_string(),
                             type_: a.as_type(),
                             default: a.default_value().cloned(),
+                            by_ref: a.by_ref(),
                         })
                         .collect(),
                     throws_type: c.throws_type().cloned(),
@@ -169,6 +171,7 @@ fn component_interface_to_metadata(
                             name: a.name().to_string(),
                             type_: a.as_type(),
                             default: a.default_value().cloned(),
+                            by_ref: a.by_ref(),
                         })
                         .collect(),
                     return_type: m.return_type().cloned(),
@@ -229,6 +232,7 @@ pub(super) fn parse_methods(methods: &[uniffi_bindgen::interface::Method]) -> Ve
                     name: a.name().to_string(),
                     type_: a.as_type(),
                     default: a.default_value().cloned(),
+                    by_ref: a.by_ref(),
                 })
                 .collect(),
             return_type: m.return_type().cloned(),
@@ -253,6 +257,7 @@ pub(super) fn parse_constructors(
                     name: a.name().to_string(),
                     type_: a.as_type(),
                     default: a.default_value().cloned(),
+                    by_ref: a.by_ref(),
                 })
                 .collect(),
             throws_type: c.throws_type().cloned(),

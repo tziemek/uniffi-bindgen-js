@@ -34,6 +34,22 @@ fn run_golden_with_config_mapped(
     );
 }
 
+/// Like `run_golden` but generates with an explicit `--crate` override, to
+/// pair UDL-mode generation with a real compiled binary's FFI namespace
+/// (see the `ffi-byref-bytes` fixture, which needs a real `uniffi >= 0.32`
+/// wasm for its smoke tests but must avoid this project's WASM-metadata
+/// parser, which is pinned to the uniffi 0.31 wire format).
+fn run_golden_with_crate_name(fixture_name: &str, udl_file: &str, ts_file: &str, crate_name: &str) {
+    run_golden_impl_full(
+        fixture_name,
+        udl_file,
+        ts_file,
+        ts_file,
+        None,
+        Some(crate_name),
+    );
+}
+
 fn run_golden_impl(
     fixture_name: &str,
     udl_file: &str,
@@ -293,6 +309,22 @@ fn run_golden_wasm_impl(
 #[test]
 fn golden_ffi_basic_fixture() {
     run_golden_wasm("ffi-basic", "ffi_basic.ts", "ffi_basic.wasm");
+}
+
+#[test]
+fn golden_ffi_byref_bytes_fixture() {
+    // Generated from UDL (not WASM metadata extraction): this fixture's
+    // Rust crate targets uniffi >= 0.32, whose FnParamMetadata wire format
+    // adds a `by_ref` byte per parameter that this project's pinned
+    // uniffi_meta 0.31 reader does not know to skip. UDL text parsing has
+    // no such binary-format dependency, so it's used here instead — see
+    // `run_golden_with_crate_name`'s doc comment.
+    run_golden_with_crate_name(
+        "ffi-byref-bytes",
+        "ffi_byref_bytes.udl",
+        "ffi_byref_bytes.ts",
+        "ffi_byref_bytes",
+    );
 }
 
 #[test]

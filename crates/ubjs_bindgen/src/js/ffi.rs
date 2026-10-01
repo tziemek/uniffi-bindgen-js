@@ -71,6 +71,34 @@ pub(super) fn is_rust_buffer_type(t: &Type) -> bool {
     element_count(t) == 3
 }
 
+/// Whether an argument is a zero-copy `[ByRef] bytes` / `&[u8]` borrow.
+///
+/// As of uniffi 0.32 (mozilla/uniffi-rs#2878), `[ByRef] bytes` arguments
+/// travel across the FFI as a `ForeignBytes` (pointer + length) value rather
+/// than an owned `RustBuffer`. This only applies to top-level function/method/
+/// constructor arguments whose (custom-resolved) type is exactly `bytes` and
+/// which carry the `[ByRef]` UDL attribute (or `&[u8]` in proc-macro-derived
+/// metadata). It does not apply to record/enum fields or return types.
+///
+/// Requires the compiled target crate to use `uniffi >= 0.32` — with older
+/// versions, `[ByRef] bytes` still travels as a `RustBuffer` and this must
+/// stay `false` to match that ABI. There is currently no reliable way to
+/// detect the target's `uniffi` version from extracted metadata alone, so
+/// this generator always assumes the >= 0.32 ABI once `by_ref` is set.
+pub(super) fn is_borrowed_bytes(t: &Type, by_ref: bool) -> bool {
+    by_ref && matches!(resolve_custom(t), Type::Bytes)
+}
+
+/// Element count for a top-level argument, accounting for the `ForeignBytes`
+/// ABI (2 elements: len(i32), dataPtr) used by `[ByRef] bytes` arguments.
+pub(super) fn arg_element_count(t: &Type, by_ref: bool) -> usize {
+    if is_borrowed_bytes(t, by_ref) {
+        2
+    } else {
+        element_count(t)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // FFI function name construction
 // ---------------------------------------------------------------------------
@@ -836,7 +864,7 @@ pub(super) fn gen_object_error_lift_fn(name: &str) -> String {
 pub(super) fn gen_ffi_call(
     ffi_name: &str,
     namespace: &str,
-    args: &[(&str, &Type)], // (js_var_name, type)
+    args: &[(&str, &Type, bool)], // (js_var_name, type, by_ref)
     return_type: Option<&Type>,
     throws_name: Option<&str>,
     indent: &str,
@@ -845,16 +873,27 @@ pub(super) fn gen_ffi_call(
     let mut lines = Vec::new();
 
     // Calculate element counts
-    let arg_elements: usize = args.iter().map(|(_, t)| element_count(t)).sum();
+    let arg_elements: usize = args.iter().map(|(_, t, r)| arg_element_count(t, *r)).sum();
     let ret_elements = return_type.map_or(0, element_count);
     let total_ret_elements = ret_elements + CALL_STATUS_ELEMENTS;
 
-    // Setup: lower RustBuffer args before allocating the element buffer.
-    // String and Bytes use raw data (FfiConverter::lower), everything else uses
-    // UniFFI binary serialization (lower_into_rust_buffer).
+    // Setup: lower RustBuffer args and ForeignBytes args before allocating the
+    // element buffer.
+    // - `[ByRef] bytes` args are copied into a temporary Rust-owned buffer
+    //   (borrowed for the duration of the call only — freed in `finally`,
+    //   never handed to Rust's `try_lift`).
+    // - String and Bytes (owned) use raw data (FfiConverter::lower);
+    //   everything else uses UniFFI binary serialization (lower_into_rust_buffer).
     let mut rb_setups = Vec::new();
-    for (var, t) in args {
-        if is_rust_buffer_type(t) {
+    let mut foreign_bytes_vars = Vec::new();
+    for (var, t, by_ref) in args {
+        if is_borrowed_bytes(t, *by_ref) {
+            let fb_var = format!("_fb_{}", var.replace('.', "_"));
+            rb_setups.push(format!(
+                "{indent}const {fb_var} = _rt.rustBufferFromBytes({var});"
+            ));
+            foreign_bytes_vars.push(fb_var);
+        } else if is_rust_buffer_type(t) {
             let rb_var = format!("_rb_{}", var.replace('.', "_"));
             let lower = gen_top_level_lower(var, t, namespace, cfg);
             rb_setups.push(format!("{indent}const {rb_var} = {lower};"));
@@ -875,14 +914,19 @@ pub(super) fn gen_ffi_call(
 
     // Write args to buffer
     let mut offset = 0;
-    for (var, t) in args {
+    for (var, t, by_ref) in args {
         let offset_expr = if offset == 0 {
             "_argPtr".to_string()
         } else {
             format!("_argPtr + {}", offset * 8)
         };
 
-        if is_rust_buffer_type(t) {
+        if is_borrowed_bytes(t, *by_ref) {
+            let fb_var = format!("_fb_{}", var.replace('.', "_"));
+            lines.push(format!(
+                "{indent}_rt.writeForeignBytesElements({offset_expr}, {fb_var}.len, {fb_var}.dataPtr);"
+            ));
+        } else if is_rust_buffer_type(t) {
             let rb_var = format!("_rb_{}", var.replace('.', "_"));
             lines.push(format!(
                 "{indent}_rt.writeRustBufferElements({offset_expr}, {rb_var});"
@@ -892,7 +936,7 @@ pub(super) fn gen_ffi_call(
             let value = gen_to_ffi(var, t);
             lines.push(format!("{indent}_rt.{write_fn}({offset_expr}, {value});"));
         }
-        offset += element_count(t);
+        offset += arg_element_count(t, *by_ref);
     }
 
     // Allocate return buffer
@@ -902,7 +946,8 @@ pub(super) fn gen_ffi_call(
     ));
 
     // Call, check status, read result — wrapped in try/finally so that
-    // scratchReset() runs even when checkCallStatus throws an error.
+    // scratchReset() (and freeing any ForeignBytes borrows) runs even when
+    // checkCallStatus throws an error.
     lines.push(format!("{indent}try {{"));
 
     lines.push(format!(
@@ -935,6 +980,12 @@ pub(super) fn gen_ffi_call(
 
     lines.push(format!("{indent}}} finally {{"));
     lines.push(format!("{indent}  _rt.scratchReset();"));
+    // Release the temporary Rust-owned buffers backing any ForeignBytes
+    // borrows. Rust never took ownership of these (unlike RustBuffer args),
+    // so we must free them ourselves once the call has returned.
+    for fb_var in &foreign_bytes_vars {
+        lines.push(format!("{indent}  _rt.freeRustBuffer({fb_var});"));
+    }
     lines.push(format!("{indent}}}"));
 
     lines.join("\n")
@@ -954,7 +1005,7 @@ pub(super) fn gen_ffi_call(
 pub(super) fn gen_async_ffi_call(
     ffi_name: &str,
     namespace: &str,
-    args: &[(&str, &Type)],
+    args: &[(&str, &Type, bool)],
     return_type: Option<&Type>,
     throws_name: Option<&str>,
     indent: &str,
@@ -969,11 +1020,20 @@ pub(super) fn gen_async_ffi_call(
 
     // --- Step 1: Lower args + call FFI buffer to get future handle ---
 
-    let arg_elements: usize = args.iter().map(|(_, t)| element_count(t)).sum();
+    let arg_elements: usize = args.iter().map(|(_, t, r)| arg_element_count(t, *r)).sum();
 
-    // Lower RustBuffer args
-    for (var, t) in args {
-        if is_rust_buffer_type(t) {
+    // Lower RustBuffer args and ForeignBytes args (see gen_ffi_call for the
+    // rationale — `[ByRef] bytes` is not supported by uniffi in async
+    // functions, but we handle it the same way for structural consistency).
+    let mut foreign_bytes_vars = Vec::new();
+    for (var, t, by_ref) in args {
+        if is_borrowed_bytes(t, *by_ref) {
+            let fb_var = format!("_fb_{}", var.replace('.', "_"));
+            lines.push(format!(
+                "{indent}const {fb_var} = _rt.rustBufferFromBytes({var});"
+            ));
+            foreign_bytes_vars.push(fb_var);
+        } else if is_rust_buffer_type(t) {
             let rb_var = format!("_rb_{}", var.replace('.', "_"));
             let lower = gen_top_level_lower(var, t, namespace, cfg);
             lines.push(format!("{indent}const {rb_var} = {lower};"));
@@ -992,13 +1052,18 @@ pub(super) fn gen_async_ffi_call(
 
     // Write args
     let mut offset = 0;
-    for (var, t) in args {
+    for (var, t, by_ref) in args {
         let offset_expr = if offset == 0 {
             "_argPtr".to_string()
         } else {
             format!("_argPtr + {}", offset * 8)
         };
-        if is_rust_buffer_type(t) {
+        if is_borrowed_bytes(t, *by_ref) {
+            let fb_var = format!("_fb_{}", var.replace('.', "_"));
+            lines.push(format!(
+                "{indent}_rt.writeForeignBytesElements({offset_expr}, {fb_var}.len, {fb_var}.dataPtr);"
+            ));
+        } else if is_rust_buffer_type(t) {
             let rb_var = format!("_rb_{}", var.replace('.', "_"));
             lines.push(format!(
                 "{indent}_rt.writeRustBufferElements({offset_expr}, {rb_var});"
@@ -1008,7 +1073,7 @@ pub(super) fn gen_async_ffi_call(
             let value = gen_to_ffi(var, t);
             lines.push(format!("{indent}_rt.{write_fn}({offset_expr}, {value});"));
         }
-        offset += element_count(t);
+        offset += arg_element_count(t, *by_ref);
     }
 
     // Return buffer: 1 element for the Handle
@@ -1107,13 +1172,17 @@ pub(super) fn gen_async_ffi_call(
         }
     }
 
-    // Finally: free the future and reset scratch.
-    // scratchReset is in finally so it runs even when checkCallStatus throws.
+    // Finally: free the future, release any ForeignBytes borrows, and reset
+    // scratch. scratchReset is in finally so it runs even when
+    // checkCallStatus throws.
     lines.push(format!("{indent}}} finally {{"));
     lines.push(format!("{indent}  _rt.scratchReset();"));
     lines.push(format!(
         "{indent}  (_rt.getExport('{free_fn}') as any)(_futureHandle);"
     ));
+    for fb_var in &foreign_bytes_vars {
+        lines.push(format!("{indent}  _rt.freeRustBuffer({fb_var});"));
+    }
     lines.push(format!("{indent}}}"));
 
     lines.join("\n")

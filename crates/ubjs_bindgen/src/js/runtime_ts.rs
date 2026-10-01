@@ -475,6 +475,21 @@ export class UniffiRuntime {
   }
 
   // -----------------------------------------------------------------------
+  // ForeignBytes Element Write (2 elements = 16 bytes in FFI buffer)
+  // -----------------------------------------------------------------------
+  //
+  // Used for `[ByRef] bytes` / `&[u8]` arguments (uniffi >= 0.32). Unlike
+  // RustBuffer, this is a *borrow*: Rust reads the bytes for the duration of
+  // the call only and never frees them. There is no corresponding read
+  // function — ForeignBytes is argument-only, never a return type.
+
+  writeForeignBytesElements(ptr: number, len: number, dataPtr: number): void {
+    const dv = this._dv();
+    dv.setInt32(ptr, len, true);        // element 0: len (i32)
+    dv.setUint32(ptr + 8, dataPtr, true); // element 1: data ptr
+  }
+
+  // -----------------------------------------------------------------------
   // RustCallStatus Element Read/Check (4 elements = 32 bytes in FFI buffer)
   // -----------------------------------------------------------------------
 

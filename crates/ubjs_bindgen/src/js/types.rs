@@ -24,6 +24,12 @@ pub(super) struct ArgDef {
     pub name: String,
     pub type_: Type,
     pub default: Option<DefaultValue>,
+    /// Whether this argument was declared `[ByRef]` (UDL) / `&T` (proc-macro).
+    ///
+    /// For `[ByRef] bytes` / `&[u8]` arguments specifically, uniffi >= 0.32
+    /// passes the value across the FFI as a `ForeignBytes` (pointer + length)
+    /// rather than an owned `RustBuffer`. See `ffi::is_borrowed_bytes`.
+    pub by_ref: bool,
 }
 
 /// A variant field (used in rich error variants and data enum variants),

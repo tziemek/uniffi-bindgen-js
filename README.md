@@ -249,13 +249,13 @@ The tool auto-detects the mode from the file extension:
 
 - **WASM mode** (`.wasm`) — reads metadata from a compiled WASM binary. Copies the `.wasm` to the output directory. This is the recommended approach.
 - **Library mode** (`.dylib` / `.so` / `.dll`) — reads metadata from a compiled UniFFI cdylib.
-- **UDL mode** (`.udl`) — reads a UDL file directly. Useful during development; the `.wasm` file must be placed alongside the output manually.
+- **UDL mode** (`.udl`) — reads a UDL file directly. Useful during development; the `.wasm` file must be placed alongside the output manually. Pass `--crate <name>` matching your Rust crate's lib name so the generated FFI calls match the real binary's exported symbols.
 
 | Flag | Description |
 |---|---|
 | `--out-dir <dir>` | Output directory for generated TypeScript files |
 | `--config <file>` | Path to `uniffi.toml` configuration |
-| `--crate <name>` | Generate bindings for this crate only (library mode) |
+| `--crate <name>` | Generate bindings for this crate only (library mode); in UDL mode, sets the FFI symbol namespace to match a real compiled binary |
 
 ### Configuration
 
@@ -345,6 +345,10 @@ RUSTFLAGS="-C link-arg=--export-table -C link-arg=--growable-table"
 | uniffi-bindgen-js | uniffi-rs |
 |---|---|
 | 0.1.x | 0.31.0 |
+
+**WASM and library mode** extract metadata directly from the compiled binary and require **uniffi 0.31.x** — the metadata wire format changed in 0.32 (an extra per-parameter byte was added for `[ByRef]` tracking, mozilla/uniffi-rs#2878) in a way this project's pinned metadata reader can't parse.
+
+**UDL mode** has no such constraint, since it parses UDL text rather than binary metadata. Pairing UDL-mode generation with a real binary compiled against **uniffi >= 0.32** (pass `--crate <name>` — see [Generate command](#generate-command) above) is the only supported way to use `[ByRef] bytes` / `&[u8]` arguments, which uniffi 0.32 lowers to a `ForeignBytes` (pointer + length) borrow instead of an owned `RustBuffer`. This generator supports that ABI on function, constructor, and method arguments.
 
 ## Contributing
 

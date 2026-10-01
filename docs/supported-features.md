@@ -11,6 +11,7 @@ Legend:
 | Area | Status | Notes |
 |---|---|---|
 | Top-level functions | Implemented | sync and async; primitives, temporal, bytes, records/enums, typed throws envelopes, and default-argument rendering; optional parameters with defaults supported |
+| `[ByRef] bytes` / `&[u8]` args | Implemented | uses the `ForeignBytes` (pointer + length borrow) ABI on functions, constructors, and methods; requires the target Rust crate to use **uniffi >= 0.32** and UDL-mode generation with `--crate <name>` (see Compatibility section in README) |
 | Objects/interfaces | Implemented | constructors (sync + async + named), methods, `free()` lifecycle with `_freed` guard and `_assertLive()` safety, `Symbol.dispose` for resource management (guarded for pre-ES2025); FinalizationRegistry safety net for leaked handles; double-free safe; forward declarations (mutual references) supported |
 | Trait interfaces (`[Trait]`) | Implemented | `_fromHandle` object return lifting; `Optional<Object>` and `Sequence<Object>` handled |
 | Records | Implemented | TypeScript `interface` types with field defaults (`?:` syntax) |

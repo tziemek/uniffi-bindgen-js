@@ -74,6 +74,7 @@ export declare class UniffiRuntime {
   writeBoolElement(ptr: number, v: boolean): void;
   writeHandleElement(ptr: number, v: bigint): void;
   writeRustBufferElements(ptr: number, rb: any): void;
+  writeForeignBytesElements(ptr: number, len: number, dataPtr: number): void;
   readU8Element(ptr: number): number;
   readI8Element(ptr: number): number;
   readU16Element(ptr: number): number;
@@ -87,6 +88,8 @@ export declare class UniffiRuntime {
   readBoolElement(ptr: number): boolean;
   readHandleElement(ptr: number): bigint;
   readRustBufferElements(ptr: number): any;
+  rustBufferFromBytes(data: Uint8Array): any;
+  freeRustBuffer(rb: any): void;
   lowerString(s: string): any;
   liftString(rb: any): string;
   lowerBytes(b: Uint8Array): any;

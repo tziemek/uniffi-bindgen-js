@@ -41,6 +41,33 @@ build_fixture_with_config() {
     "$wasm_crate/target/wasm32-unknown-unknown/release/${namespace}.wasm"
 }
 
+# Like `build_fixture`, but generates from the UDL source (with an explicit
+# `--crate` override) instead of extracting metadata from the compiled
+# WASM. Needed when the fixture's Rust crate targets a uniffi version whose
+# metadata wire format this project's pinned `uniffi_meta` reader can't
+# parse (e.g. uniffi >= 0.32 adds a `by_ref` byte per function parameter).
+# The compiled `.wasm` is still built and copied alongside the generated
+# bindings so the smoke tests run against the real binary.
+build_fixture_from_udl() {
+  local fixture="$1"
+  local namespace="$2"
+  local wasm_crate="$REPO_ROOT/fixtures/${fixture}/wasm"
+  local udl="$REPO_ROOT/fixtures/${fixture}/src/${namespace}.udl"
+
+  echo "==> [${fixture}] Compiling WASM..."
+  (cd "$wasm_crate" && RUSTFLAGS="-C link-arg=--export-table -C link-arg=--growable-table" \
+    cargo build --target wasm32-unknown-unknown --release)
+
+  echo "==> [${fixture}] Generating TypeScript bindings from UDL..."
+  cargo run -p uniffi-bindgen-js -- generate \
+    --crate "$namespace" \
+    --out-dir "$GENERATED_DIR" \
+    "$udl"
+
+  echo "==> [${fixture}] Copying WASM alongside generated bindings..."
+  cp "$wasm_crate/target/wasm32-unknown-unknown/release/${namespace}.wasm" "$GENERATED_DIR/"
+}
+
 build_fixture "ffi-basic"       "ffi_basic"
 build_fixture "ffi-compound"    "ffi_compound"
 build_fixture "ffi-errors"      "ffi_errors"
@@ -50,6 +77,7 @@ build_fixture "ffi-traits"      "ffi_traits"
 build_fixture "ffi-features"    "ffi_features"
 build_fixture_with_config "ffi-custom-types"   "ffi_custom_types" "$REPO_ROOT/fixtures/ffi-custom-types/wasm/uniffi.toml"
 build_fixture_with_config "ffi-rename-exclude"  "ffi_rename_exclude" "$REPO_ROOT/fixtures/ffi-rename-exclude/wasm/uniffi.toml"
+build_fixture_from_udl "ffi-byref-bytes" "ffi_byref_bytes"
 
 echo "==> Installing JS dependencies..."
 (cd "$REPO_ROOT/binding_tests" && pnpm install --frozen-lockfile)

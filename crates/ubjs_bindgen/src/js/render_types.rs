@@ -221,10 +221,10 @@ fn render_constructors_ffi(
             .iter()
             .map(|a| safe_js_identifier(&camel_case(&a.name)))
             .collect();
-        let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type)> = js_arg_names
+        let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type, bool)> = js_arg_names
             .iter()
             .zip(ctor.args.iter())
-            .map(|(name, a)| (name.as_str(), &a.type_))
+            .map(|(name, a)| (name.as_str(), &a.type_, a.by_ref))
             .collect();
 
         // Constructor returns the type via RustBuffer (for enums/records/errors).
@@ -318,10 +318,10 @@ fn render_methods_on_class_ffi(
             .map(|a| safe_js_identifier(&camel_case(&a.name)))
             .collect();
 
-        let mut arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type)> =
-            vec![("this", &self_type)];
+        let mut arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type, bool)> =
+            vec![("this", &self_type, false)];
         for (name, a) in js_arg_names.iter().zip(m.args.iter()) {
-            arg_pairs.push((name.as_str(), &a.type_));
+            arg_pairs.push((name.as_str(), &a.type_, a.by_ref));
         }
 
         let body = if m.is_async {
@@ -403,10 +403,10 @@ fn render_companion_methods_ffi(
             .map(|a| safe_js_identifier(&camel_case(&a.name)))
             .collect();
 
-        let mut arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type)> =
-            vec![("value", self_type)];
+        let mut arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type, bool)> =
+            vec![("value", self_type, false)];
         for (name, a) in js_arg_names.iter().zip(m.args.iter()) {
-            arg_pairs.push((name.as_str(), &a.type_));
+            arg_pairs.push((name.as_str(), &a.type_, a.by_ref));
         }
 
         let body = if m.is_async {
@@ -524,7 +524,8 @@ fn render_trait_method_ffi(
         "  export function {exported}(value: {parent_name}): {ts_ret} {{\n"
     ));
 
-    let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type)> = vec![("value", self_type)];
+    let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type, bool)> =
+        vec![("value", self_type, false)];
 
     let body = ffi::gen_ffi_call(
         &ffi_name,
@@ -555,8 +556,8 @@ fn render_trait_eq_ffi(
         "  export function equals(value: {parent_name}, other: {parent_name}): boolean {{\n"
     ));
 
-    let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type)> =
-        vec![("value", self_type), ("other", self_type)];
+    let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type, bool)> =
+        vec![("value", self_type, false), ("other", self_type, false)];
 
     let body = ffi::gen_ffi_call(
         &ffi_name,
@@ -587,8 +588,8 @@ fn render_trait_ord_ffi(
         "  export function compareTo(value: {parent_name}, other: {parent_name}): number {{\n"
     ));
 
-    let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type)> =
-        vec![("value", self_type), ("other", self_type)];
+    let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type, bool)> =
+        vec![("value", self_type, false), ("other", self_type, false)];
 
     let body = ffi::gen_ffi_call(
         &ffi_name,

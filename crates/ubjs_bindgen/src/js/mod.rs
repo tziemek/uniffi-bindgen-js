@@ -327,7 +327,11 @@ fn render_ts(
     for cb in &metadata.callback_interfaces {
         if !cfg.exclude.contains(&cb.name) {
             out.push('\n');
-            out.push_str(&ffi::gen_callback_vtable_registration(cb, ffi_namespace, cfg));
+            out.push_str(&ffi::gen_callback_vtable_registration(
+                cb,
+                ffi_namespace,
+                cfg,
+            ));
         }
     }
 
@@ -393,7 +397,11 @@ fn render_ts(
             }
         } else {
             if needs_lower {
-                out.push_str(&ffi::gen_rich_error_value_lower_fn(error, ffi_namespace, cfg));
+                out.push_str(&ffi::gen_rich_error_value_lower_fn(
+                    error,
+                    ffi_namespace,
+                    cfg,
+                ));
             }
             if needs_lift {
                 out.push_str(&ffi::gen_rich_error_value_lift_fn(error, cfg));
@@ -512,13 +520,15 @@ use render_helpers::{
 ///
 /// For each Object-typed arg, emits a clone line and replaces the arg name
 /// with the cloned handle variable (a raw bigint). Non-object args pass through.
+/// The `by_ref` flag from each `ArgDef` is carried through unchanged (only
+/// meaningful for `bytes` args — see `ffi::is_borrowed_bytes`).
 fn prepare_object_args(
     args: &[ArgDef],
     js_arg_names: &[String],
     ffi_namespace: &str,
     indent: &str,
     out: &mut String,
-) -> Vec<(String, uniffi_bindgen::interface::Type)> {
+) -> Vec<(String, uniffi_bindgen::interface::Type, bool)> {
     let mut result = Vec::new();
     for (name, a) in js_arg_names.iter().zip(args.iter()) {
         if let uniffi_bindgen::interface::Type::Object { name: obj_name, .. } = &a.type_ {
@@ -527,9 +537,9 @@ fn prepare_object_args(
             out.push_str(&format!(
                 "{indent}const {clone_var} = _rt.cloneObjectHandle('{clone_fn}', {name}._handle);\n"
             ));
-            result.push((clone_var, a.type_.clone()));
+            result.push((clone_var, a.type_.clone(), a.by_ref));
         } else {
-            result.push((name.clone(), a.type_.clone()));
+            result.push((name.clone(), a.type_.clone(), a.by_ref));
         }
     }
     result
@@ -651,9 +661,9 @@ fn render_function(f: &FnDef, ffi_namespace: &str, cfg: &config::JsBindingsConfi
 
     // Clone Object-typed args (FFI scaffolding consumes handles)
     let prepared = prepare_object_args(&f.args, &js_arg_names, ffi_namespace, "    ", &mut out);
-    let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type)> = prepared
+    let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type, bool)> = prepared
         .iter()
-        .map(|(name, t)| (name.as_str(), t))
+        .map(|(name, t, by_ref)| (name.as_str(), t, *by_ref))
         .collect();
 
     let mut body = if f.is_async {
@@ -691,7 +701,11 @@ fn render_function(f: &FnDef, ffi_namespace: &str, cfg: &config::JsBindingsConfi
 // FFI-direct object class rendering
 // ---------------------------------------------------------------------------
 
-fn render_object_class(o: &ObjectDef, ffi_namespace: &str, cfg: &config::JsBindingsConfig) -> String {
+fn render_object_class(
+    o: &ObjectDef,
+    ffi_namespace: &str,
+    cfg: &config::JsBindingsConfig,
+) -> String {
     let mut out = String::new();
     let name = &o.name;
 
@@ -838,9 +852,9 @@ fn render_object_trait_methods(
             "    const _clonedOther = _rt.cloneObjectHandle('{clone_fn}', other._handle);\n"
         ));
 
-        let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type)> = vec![
-            ("_clonedSelf", &handle_type),
-            ("_clonedOther", &handle_type),
+        let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type, bool)> = vec![
+            ("_clonedSelf", &handle_type, false),
+            ("_clonedOther", &handle_type, false),
         ];
 
         let body = ffi::gen_ffi_call(
@@ -886,9 +900,9 @@ fn render_object_trait_methods(
             "    const _clonedOther = _rt.cloneObjectHandle('{clone_fn}', other._handle);\n"
         ));
 
-        let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type)> = vec![
-            ("_clonedSelf", &handle_type),
-            ("_clonedOther", &handle_type),
+        let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type, bool)> = vec![
+            ("_clonedSelf", &handle_type, false),
+            ("_clonedOther", &handle_type, false),
         ];
 
         let body = ffi::gen_ffi_call(
@@ -934,8 +948,8 @@ fn render_object_trait_method(
         "    const _clonedHandle = _rt.cloneObjectHandle('{clone_fn}', this._handle);\n"
     ));
 
-    let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type)> =
-        vec![("_clonedHandle", &handle_type)];
+    let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type, bool)> =
+        vec![("_clonedHandle", &handle_type, false)];
 
     let body = ffi::gen_ffi_call(
         &ffi_name,
@@ -990,9 +1004,9 @@ fn render_ctor(
 
     // Clone Object-typed args (FFI scaffolding consumes handles)
     let prepared = prepare_object_args(&ctor.args, &js_arg_names, ffi_namespace, "    ", &mut out);
-    let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type)> = prepared
+    let arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type, bool)> = prepared
         .iter()
-        .map(|(name, t)| (name.as_str(), t))
+        .map(|(name, t, by_ref)| (name.as_str(), t, *by_ref))
         .collect();
 
     // Constructor returns a Handle (Object type)
@@ -1091,10 +1105,10 @@ fn render_method(
     // Clone Object-typed user args (FFI scaffolding consumes handles)
     let prepared = prepare_object_args(&m.args, &js_arg_names, ffi_namespace, "    ", &mut out);
 
-    let mut arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type)> =
-        vec![("_clonedHandle", &handle_type)];
-    for (name, t) in &prepared {
-        arg_pairs.push((name.as_str(), t));
+    let mut arg_pairs: Vec<(&str, &uniffi_bindgen::interface::Type, bool)> =
+        vec![("_clonedHandle", &handle_type, false)];
+    for (name, t, by_ref) in &prepared {
+        arg_pairs.push((name.as_str(), t, *by_ref));
     }
 
     let mut body = if m.is_async {
@@ -1341,6 +1355,7 @@ mod tests {
             name: "user_name".into(),
             type_: Type::String,
             default: None,
+            by_ref: false,
         };
         assert_eq!(render_param(&arg), "userName: string");
     }
@@ -1355,6 +1370,7 @@ mod tests {
                 uniffi_bindgen::interface::Radix::Decimal,
                 Type::Int32,
             ))),
+            by_ref: false,
         };
         assert_eq!(render_param(&arg), "count: number = 0");
     }
@@ -1365,6 +1381,7 @@ mod tests {
             name: "count".into(),
             type_: Type::Int32,
             default: Some(DefaultValue::Default),
+            by_ref: false,
         };
         assert_eq!(render_param(&arg), "count?: number");
     }
@@ -1504,6 +1521,7 @@ mod tests {
                             module_path: "ext_crate::sub".into(),
                         },
                         default: None,
+                        by_ref: false,
                     },
                     super::types::ArgDef {
                         name: "a".into(),
@@ -1512,6 +1530,7 @@ mod tests {
                             module_path: "ext_crate::sub".into(),
                         },
                         default: None,
+                        by_ref: false,
                     },
                 ],
                 return_type: None,

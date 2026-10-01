@@ -1,0 +1,20 @@
+namespace ffi_byref_bytes {
+  /// Sums the bytes as unsigned values without taking ownership of the buffer.
+  /// Exercises `[ByRef] bytes` as a top-level function argument, which uses
+  /// the `ForeignBytes` (pointer + length) ABI on uniffi >= 0.32 instead of
+  /// a `RustBuffer`.
+  u64 sum_bytes([ByRef] bytes data);
+
+  /// Mixes a `[ByRef] bytes` argument with plain owned scalar/bytes
+  /// arguments, to exercise FFI element-offset math when ForeignBytes
+  /// (2 elements) is interleaved with other argument shapes.
+  bytes xor_bytes([ByRef] bytes data, u8 key, bytes suffix);
+};
+
+interface BytesAccumulator {
+  constructor(u64 seed);
+
+  /// Exercises `[ByRef] bytes` as a method argument (in addition to the
+  /// synthetic `this` handle argument).
+  u64 accumulate([ByRef] bytes data);
+};
